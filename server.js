@@ -1,8 +1,13 @@
 const express = require("express");
+const cors = require("cors");
 const multer = require("multer");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
+
+// Cho phép CORS để test từ file HTML ngoài
+app.use(cors());
+app.use(express.json());
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -10,8 +15,6 @@ const upload = multer({
     fileSize: 50 * 1024 * 1024
   }
 });
-
-app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
@@ -32,12 +35,8 @@ app.get("/", (req, res) => {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LÂM MOD</title>
-
 <style>
-* {
-  box-sizing: border-box;
-}
-
+* { box-sizing: border-box; }
 body {
   margin: 0;
   min-height: 100vh;
@@ -48,7 +47,6 @@ body {
   justify-content: center;
   align-items: center;
 }
-
 .box {
   width: 90%;
   max-width: 600px;
@@ -58,24 +56,15 @@ body {
   border: 1px solid #333;
   border-radius: 20px;
 }
-
-h1 {
-  margin-bottom: 10px;
-}
-
-p {
-  color: #999;
-}
+h1 { margin-bottom: 10px; }
+p { color: #999; }
 </style>
 </head>
-
 <body>
-
 <div class="box">
   <h1>🔒 LÂM MOD</h1>
   <p>Hệ thống lưu trữ và bảo vệ mã nguồn Lua</p>
 </div>
-
 </body>
 </html>
   `);
@@ -100,9 +89,10 @@ app.get("/:filename", async (req, res) => {
 
   const filename = safeFilename(req.params.filename);
 
+  // Cho phép file chứa .lua hoặc .txt (hỗ trợ cả .lua.txt)
   if (
-    !filename.endsWith(".lua") &&
-    !filename.endsWith(".txt")
+    !filename.includes(".lua") &&
+    !filename.includes(".txt")
   ) {
     return res.status(404).send("Not Found");
   }
@@ -124,83 +114,47 @@ app.get("/:filename", async (req, res) => {
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-
 <title>LÂM MOD - Protected</title>
-
 <style>
-
-* {
-  box-sizing: border-box;
-}
-
+* { box-sizing: border-box; }
 body {
   margin: 0;
   min-height: 100vh;
   background: #080808;
   color: white;
   font-family: Arial, sans-serif;
-
   display: flex;
   justify-content: center;
   align-items: center;
 }
-
 .box {
   width: 90%;
   max-width: 650px;
-
   padding: 40px;
-
   text-align: center;
-
   background: #111;
-
   border: 1px solid #333;
-
   border-radius: 20px;
 }
-
-.lock {
-  font-size: 60px;
-}
-
-h1 {
-  font-size: 26px;
-}
-
-p {
-  color: #999;
-}
-
+.lock { font-size: 60px; }
+h1 { font-size: 26px; }
+p { color: #999; }
 </style>
-
 </head>
-
 <body>
-
 <div class="box">
-
 <div class="lock">🔒</div>
-
-<h1>
-CODE ĐƯỢC BẢO VỆ BỞI LÂM MOD
-</h1>
-
-<p>
-Mã nguồn này được lưu trữ bởi Lâm MOD.
-</p>
-
+<h1>CODE ĐƯỢC BẢO VỆ BỞI LÂM MOD</h1>
+<p>Mã nguồn này được lưu trữ bởi Lâm MOD.</p>
 </div>
-
 </body>
 </html>
     `);
   }
 
-  // Không phải HTML -> trả source
+  // Không phải HTML -> trả source text
   const text = await data.text();
 
   res.setHeader(
@@ -226,15 +180,15 @@ app.post(
       });
     }
 
-    const filename =
-      safeFilename(req.file.originalname);
+    const filename = safeFilename(req.file.originalname);
 
+    // Cho phép upload file chứa .lua hoặc .txt
     if (
-      !filename.endsWith(".lua") &&
-      !filename.endsWith(".txt")
+      !filename.includes(".lua") &&
+      !filename.includes(".txt")
     ) {
       return res.status(400).json({
-        error: "Chỉ cho phép file .lua hoặc .txt"
+        error: "Chỉ cho phép file chứa .lua hoặc .txt"
       });
     }
 
@@ -247,30 +201,23 @@ app.post(
           {
             contentType:
               req.file.mimetype || "text/plain",
-
             upsert: true
           }
         );
 
     if (error) {
-
       return res.status(500).json({
         error: error.message
       });
-
     }
 
     const baseUrl =
       `${req.protocol}://${req.get("host")}`;
 
     res.json({
-
       success: true,
-
       filename: filename,
-
-      url:
-        `${baseUrl}/${encodeURIComponent(filename)}`
+      url: `${baseUrl}/${encodeURIComponent(filename)}`
     });
 
   }
@@ -281,9 +228,5 @@ app.post(
 // =========================
 
 app.listen(PORT, () => {
-
-  console.log(
-    `LÂM MOD running on port ${PORT}`
-  );
-
+  console.log(`LÂM MOD running on port ${PORT}`);
 });
