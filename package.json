@@ -1,0 +1,14 @@
+{
+  "name": "lam-mod-host",
+  "version": "1.0.0",
+  "description": "Lâm MOD Lua Hosting",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.54.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.2"
+  }
+}
