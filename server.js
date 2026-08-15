@@ -24,7 +24,16 @@ const supabase = createClient(
 );
 
 // =========================
-// LÂM MOD HOST
+// HÀM OBFUSCATE MẪU
+// =========================
+function obfuscateLuaCode(codeText) {
+  // Mã hóa base64 và bọc lại để bảo vệ mã nguồn
+  const encoded = Buffer.from(codeText, 'utf-8').toString('base64');
+  return `--[[ \n  Protected by LÂM MOD Obfuscator \n]]--\nlocal encodedData = "${encoded}";\n-- Code obfuscated successfully`;
+}
+
+// =========================
+// LÂM MOD HOST (TRANG CHỦ)
 // =========================
 
 app.get("/", (req, res) => {
@@ -82,7 +91,7 @@ function safeFilename(name) {
 }
 
 // =========================
-// RAW FILE
+// RAW FILE & PROTECT
 // =========================
 
 app.get("/:filename", async (req, res) => {
@@ -154,7 +163,7 @@ p { color: #999; }
     `);
   }
 
-  // Không phải HTML -> trả source text
+  // Không phải HTML -> trả source text (cho tool/game đọc)
   const text = await data.text();
 
   res.setHeader(
@@ -166,7 +175,7 @@ p { color: #999; }
 });
 
 // =========================
-// UPLOAD
+// UPLOAD & OBFUSCATE
 // =========================
 
 app.post(
@@ -182,7 +191,6 @@ app.post(
 
     const filename = safeFilename(req.file.originalname);
 
-    // Cho phép upload file chứa .lua hoặc .txt
     if (
       !filename.includes(".lua") &&
       !filename.includes(".txt")
@@ -192,15 +200,22 @@ app.post(
       });
     }
 
+    let fileContent = req.file.buffer.toString('utf-8');
+    const wantObfuscate = req.body.obfuscate === 'yes' || req.body.obfuscate === 'true';
+
+    // Nếu chọn có obfuscate thì chạy hàm làm rối
+    if (wantObfuscate) {
+      fileContent = obfuscateLuaCode(fileContent);
+    }
+
     const { error } =
       await supabase.storage
         .from("scripts")
         .upload(
           filename,
-          req.file.buffer,
+          Buffer.from(fileContent, 'utf-8'),
           {
-            contentType:
-              req.file.mimetype || "text/plain",
+            contentType: "text/plain; charset=utf-8",
             upsert: true
           }
         );
@@ -211,12 +226,12 @@ app.post(
       });
     }
 
-    const baseUrl =
-      `${req.protocol}://${req.get("host")}`;
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
 
     res.json({
       success: true,
       filename: filename,
+      obfuscated: wantObfuscate,
       url: `${baseUrl}/${encodeURIComponent(filename)}`
     });
 
