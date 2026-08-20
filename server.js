@@ -7,8 +7,8 @@ const { createClient } = require("@supabase/supabase-js");
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+app.use(express.json({ limit: "8mb" }));
+app.use(express.urlencoded({ extended: true, limit: "8mb" }));
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -33,6 +33,94 @@ if (!ADMIN_USER || !ADMIN_PASS) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const adminTokens = new Set();
+const AUTH_SECRET = process.env.AUTH_SECRET || SUPABASE_SERVICE_ROLE_KEY;
+const TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+
+function normalizeUsername(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isValidUsername(username) {
+  return /^[a-z0-9_]{3,20}$/.test(username);
+}
+
+function hashPassword(password, salt) {
+  return crypto.scryptSync(String(password), salt, 32).toString("hex");
+}
+
+function signUserToken(username) {
+  const payload = Buffer.from(
+    JSON.stringify({ u: username, exp: Date.now() + TOKEN_TTL_MS })
+  ).toString("base64url");
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("base64url");
+  return `${payload}.${sig}`;
+}
+
+function verifyUserToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  const expected = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("base64url");
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (sigBuf.length !== expectedBuf.length) return null;
+  if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!data || !data.u || data.exp < Date.now()) return null;
+    return data.u;
+  } catch {
+    return null;
+  }
+}
+
+function accountPath(username) {
+  return `_accounts/${username}.json`;
+}
+
+async function loadAccount(username) {
+  const { data, error } = await supabase.storage.from("scripts").download(accountPath(username));
+  if (error || !data) return null;
+  try {
+    return JSON.parse(await data.text());
+  } catch {
+    return null;
+  }
+}
+
+async function saveAccount(account) {
+  const { error } = await supabase.storage.from("scripts").upload(
+    accountPath(account.username),
+    Buffer.from(JSON.stringify(account), "utf8"),
+    { contentType: "application/json", upsert: true }
+  );
+  if (error) throw new Error(error.message);
+}
+
+function publicUser(account) {
+  return {
+    username: account.username,
+    scripts: Array.isArray(account.scripts) ? account.scripts : [],
+    repos: Array.isArray(account.repos) ? account.repos : [],
+  };
+}
+
+function getBearerToken(req) {
+  const header = req.headers.authorization || "";
+  if (header.startsWith("Bearer ")) return header.slice(7).trim();
+  const cookies = parseCookie(req);
+  return cookies.lam_user || "";
+}
+
+async function requireUser(req, res, next) {
+  const username = verifyUserToken(getBearerToken(req));
+  if (!username) return res.status(401).json({ error: "Chưa đăng nhập" });
+  const account = await loadAccount(username);
+  if (!account) return res.status(401).json({ error: "Tài khoản không tồn tại" });
+  req.account = account;
+  return next();
+}
 
 function makeToken() {
   return crypto.randomBytes(32).toString("hex");
@@ -443,6 +531,89 @@ app.post("/admin/delete", requireOwnerPage, async (req, res) => {
     await supabase.storage.from("scripts").remove([filename, filename + ".lamkey"]);
   }
   return res.redirect("/admin");
+});
+
+app.post("/auth/register", async (req, res) => {
+  const username = normalizeUsername(req.body.username);
+  const password = String(req.body.password || "");
+
+  if (!isValidUsername(username)) {
+    return res.status(400).json({ error: "Tên người dùng 3-20 ký tự, chỉ a-z, 0-9 và _" });
+  }
+  if (password.length < 4) {
+    return res.status(400).json({ error: "Mật khẩu ít nhất 4 ký tự" });
+  }
+
+  const existing = await loadAccount(username);
+  if (existing) return res.status(409).json({ error: "Tên đã tồn tại" });
+
+  const salt = crypto.randomBytes(16).toString("hex");
+  const account = {
+    username,
+    salt,
+    passHash: hashPassword(password, salt),
+    scripts: [],
+    repos: [],
+    created: new Date().toISOString(),
+  };
+
+  try {
+    await saveAccount(account);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+
+  const token = signUserToken(username);
+  return res.json({ success: true, username, token });
+});
+
+app.post("/auth/login", async (req, res) => {
+  const username = normalizeUsername(req.body.username);
+  const password = String(req.body.password || "");
+  const account = await loadAccount(username);
+
+  if (!account) {
+    return res.status(403).json({ error: "Sai tên hoặc mật khẩu" });
+  }
+
+  const passHash = hashPassword(password, account.salt || "");
+  if (passHash !== account.passHash) {
+    return res.status(403).json({ error: "Sai tên hoặc mật khẩu" });
+  }
+
+  const token = signUserToken(username);
+  return res.json({
+    success: true,
+    username,
+    token,
+    scripts: account.scripts || [],
+    repos: account.repos || [],
+  });
+});
+
+app.get("/auth/me", requireUser, (req, res) => {
+  return res.json({ success: true, ...publicUser(req.account) });
+});
+
+app.get("/user/data", requireUser, (req, res) => {
+  return res.json({ success: true, ...publicUser(req.account) });
+});
+
+app.put("/user/data", requireUser, async (req, res) => {
+  const scripts = Array.isArray(req.body.scripts) ? req.body.scripts : req.account.scripts;
+  const repos = Array.isArray(req.body.repos) ? req.body.repos : req.account.repos;
+
+  req.account.scripts = scripts;
+  req.account.repos = repos;
+  req.account.updated = new Date().toISOString();
+
+  try {
+    await saveAccount(req.account);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+
+  return res.json({ success: true, ...publicUser(req.account) });
 });
 
 app.get("/raw/:filename", async (req, res) => {
